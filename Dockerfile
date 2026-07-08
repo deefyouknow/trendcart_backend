@@ -44,7 +44,7 @@ RUN chown appuser:appgroup /usr/local/bin/trendcart_api
 USER appuser
 
 # Expose the application port
-EXPOSE 8000
+EXPOSE 59123
 
 # Set environment variables (these will typically be overridden at runtime)
 ENV RUST_LOG=info
