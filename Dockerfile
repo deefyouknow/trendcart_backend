@@ -19,10 +19,8 @@ RUN rm -rf src
 
 # Copy the actual source code
 COPY src ./src
-COPY .sqlx ./.sqlx
 
-# Build the application
-# Use the offline mode for sqlx to build without needing a live database
+# Build the application in offline mode
 ENV SQLX_OFFLINE=true
 RUN cargo build --release
 

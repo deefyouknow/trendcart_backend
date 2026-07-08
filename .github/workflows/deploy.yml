@@ -8,7 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Deploy Backend to Server via SSH
         uses: appleboy/ssh-action@v1.0.3
@@ -18,25 +18,76 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           port: ${{ secrets.SSH_PORT }}
           script: |
+            set -e
+
             PROJECT_DIR="/home/dserver/share_folder/application/TrendCart_Project"
-            
-            mkdir -p $PROJECT_DIR
-            cd $PROJECT_DIR
-            
-            if [ ! -d "backend/.git" ]; then
-              mkdir -p backend
-              cd backend
+            BACKEND_DIR="$PROJECT_DIR/backend"
+
+            mkdir -p "$PROJECT_DIR"
+            mkdir -p "$BACKEND_DIR"
+
+            # ── Sync docker-compose.yml ที่ root project ───────────────────
+            cat > "$PROJECT_DIR/docker-compose.yml" << 'COMPOSE_EOF'
+            services:
+              trendcart_api:
+                build:
+                  context: ./backend
+                  dockerfile: Dockerfile
+                container_name: trendcart_api
+                restart: always
+                env_file:
+                  - ./backend/.env
+                environment:
+                  RUST_LOG: info
+                ports:
+                  - "59123:59123"
+                networks:
+                  - trendcart_net
+
+              trendcart_frontend:
+                build:
+                  context: ./frontend
+                  dockerfile: Dockerfile
+                container_name: trendcart_frontend
+                restart: always
+                depends_on:
+                  - trendcart_api
+                env_file:
+                  - ./frontend/.env
+                environment:
+                  - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://trendcartapi.deefthanawat.online}
+                ports:
+                  - "59124:3000"
+                networks:
+                  - trendcart_net
+
+            networks:
+              trendcart_net:
+                driver: bridge
+            COMPOSE_EOF
+
+            # ── Clone หรือ pull backend repo ───────────────────────────────
+            if [ ! -d "$BACKEND_DIR/.git" ]; then
+              echo "[INFO] First-time setup: cloning backend repo..."
+              cd "$BACKEND_DIR"
               git init
               git remote add origin https://github.com/${{ github.repository }}.git
               git fetch --all
               git reset --hard origin/main
               git branch -M main
-              cd ..
+            else
+              echo "[INFO] Pulling latest backend code..."
+              cd "$BACKEND_DIR"
+              git pull origin main
             fi
-            
-            cd backend
-            git pull origin main
-            
-            cd ..
+
+            # ── docker compose อยู่ที่ PROJECT_DIR (root) ─────────────────
+            cd "$PROJECT_DIR"
+
+            echo "[INFO] Building backend Docker image..."
             docker compose build trendcart_api
-            docker compose up -d trendcart_api
+
+            echo "[INFO] Restarting backend container..."
+            docker compose up -d --no-deps trendcart_api
+
+            echo "[SUCCESS] Backend deployed!"
