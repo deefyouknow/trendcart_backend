@@ -23,9 +23,15 @@ jobs:
             mkdir -p $PROJECT_DIR
             cd $PROJECT_DIR
             
-            # ถ้ายังไม่มีโฟลเดอร์ให้ทำการ Clone โค้ด
             if [ ! -d "backend/.git" ]; then
-              git clone https://github.com/${{ github.repository }}.git backend
+              mkdir -p backend
+              cd backend
+              git init
+              git remote add origin https://github.com/${{ github.repository }}.git
+              git fetch --all
+              git reset --hard origin/main
+              git branch -M main
+              cd ..
             fi
             
             cd backend
