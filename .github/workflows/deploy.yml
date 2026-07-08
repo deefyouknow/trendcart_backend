@@ -18,8 +18,8 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 6864
           script: |
-            # เปลี่ยน /path/to/TrendCart เป็น path จริงบน Server
-            cd /path/to/TrendCart/backend
+            # ไปที่โฟลเดอร์โปรเจคบน Server
+            cd /home/dserver/TrendCart/backend
             git pull origin main
             
             cd ..
