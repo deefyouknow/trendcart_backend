@@ -5,7 +5,11 @@ FROM rust:1.88-alpine AS builder
 WORKDIR /usr/src/app
 
 # Install required build dependencies for alpine
-RUN apk add --no-cache musl-dev pkgconfig openssl-dev
+RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static
+
+# Force static linking for OpenSSL on Alpine/musl
+ENV OPENSSL_STATIC=1
+ENV OPENSSL_DIR=/usr
 
 # Copy the Cargo.toml and Cargo.lock files
 COPY Cargo.toml Cargo.lock ./
