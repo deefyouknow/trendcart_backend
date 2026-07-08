@@ -20,6 +20,9 @@ RUN rm -rf src
 # Copy the actual source code
 COPY src ./src
 
+# Copy migrations folder (required by sqlx::migrate! compile-time macro)
+COPY migrations ./migrations
+
 # Build the application in offline mode
 ENV SQLX_OFFLINE=true
 RUN cargo build --release
