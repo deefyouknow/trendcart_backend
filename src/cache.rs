@@ -32,6 +32,17 @@ impl RedisCache {
         Ok(Self { client })
     }
 
+    // ── Liveness ──────────────────────────────────────────────
+
+    /// Ping Redis. Returns Ok(true) if PONG received, Err otherwise.
+    pub async fn ping(&self) -> Result<bool, String> {
+        self.client
+            .ping::<String>(None)
+            .await
+            .map(|_| true)
+            .map_err(|e| format!("Redis PING failed: {}", e))
+    }
+
     // ── Cache-aside (read/write) ──────────────────────────────
 
     /// GET a cached value. Returns None on miss or error.
@@ -94,6 +105,27 @@ impl RedisCache {
                 break;
             }
         }
+    }
+
+    // ── Session store (refresh tokens) ────────────────────────
+
+    /// Store a refresh token session in Redis.
+    /// Key: `session:refresh:{user_id}`  Value: refresh token string.
+    pub async fn set_session(&self, user_id: &str, refresh_token: &str, ttl_secs: u64) {
+        let key = format!("session:refresh:{}", user_id);
+        self.set(&key, refresh_token, ttl_secs).await;
+    }
+
+    /// Get the stored refresh token for a user. Returns None if no session or expired.
+    pub async fn get_session(&self, user_id: &str) -> Option<String> {
+        let key = format!("session:refresh:{}", user_id);
+        self.get(&key).await
+    }
+
+    /// Delete a user's session (logout / revoke).
+    pub async fn delete_session(&self, user_id: &str) {
+        let key = format!("session:refresh:{}", user_id);
+        self.delete(&key).await;
     }
 
     // ── Rate limiter (INCR + EXPIRE) ─────────────────────────

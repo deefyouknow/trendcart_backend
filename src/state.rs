@@ -12,6 +12,19 @@ pub struct AppState {
     pub job_sender: Option<mpsc::Sender<JobCommand>>,
 }
 
+impl AppState {
+    /// Invalidate all store-related caches (list + individual product).
+    /// Call this on every write to products/variants/merchant_links.
+    pub async fn invalidate_store_cache(&self, product_id: Option<uuid::Uuid>) {
+        self.redis.delete_pattern("store:list:*").await;
+        if let Some(id) = product_id {
+            self.redis
+                .delete(&format!("store:product:{}", id))
+                .await;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,7 +1,6 @@
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -172,6 +171,23 @@ pub async fn create(
     // Verify product ownership
     verify_product_ownership(&state, product_id, creator_id).await?;
 
+    // Validate stock_status values before starting transaction
+    for v in &payload.variants {
+        let stock_status = v.stock_status.as_deref().unwrap_or("unknown");
+        if !["in_stock", "out_of_stock", "unknown"].contains(&stock_status) {
+            return Err(AppError::Validation(
+                "stock_status must be one of: in_stock, out_of_stock, unknown".to_string(),
+            ));
+        }
+    }
+
+    // Use transaction to prevent race condition between verify and insert
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(|e| AppError::Internal(format!("Transaction error: {}", e)))?;
+
     // Create merchant link
     let link: MerchantLink = sqlx::query_as(
         r#"
@@ -184,7 +200,7 @@ pub async fn create(
     .bind(&platform_lower)
     .bind(&payload.store_name)
     .bind(&payload.affiliate_url)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
 
     // Create variants
@@ -192,12 +208,6 @@ pub async fn create(
     for v in &payload.variants {
         let currency = v.currency.clone().unwrap_or_else(|| "THB".to_string());
         let stock_status = v.stock_status.clone().unwrap_or_else(|| "unknown".to_string());
-
-        if !["in_stock", "out_of_stock", "unknown"].contains(&stock_status.as_str()) {
-            return Err(AppError::Validation(format!(
-                "stock_status must be one of: in_stock, out_of_stock, unknown"
-            )));
-        }
 
         let variant: ProductVariant = sqlx::query_as(
             r#"
@@ -211,7 +221,7 @@ pub async fn create(
         .bind(v.price)
         .bind(&currency)
         .bind(&stock_status)
-        .fetch_one(&state.db)
+        .fetch_one(&mut *tx)
         .await?;
 
         variants.push(VariantResponse {
@@ -223,12 +233,12 @@ pub async fn create(
         });
     }
 
-    // Invalidate store cache (merchant link changes affect product listing)
-    state.redis.delete_pattern("store:list:*").await;
-    state
-        .redis
-        .delete(&format!("store:product:{}", product_id))
-        .await;
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Internal(format!("Transaction commit error: {}", e)))?;
+
+    // Invalidate store cache (write-through)
+    state.invalidate_store_cache(Some(product_id)).await;
 
     Ok((
         StatusCode::CREATED,
@@ -349,12 +359,8 @@ pub async fn update(
         })
         .collect();
 
-    // Invalidate store cache
-    state.redis.delete_pattern("store:list:*").await;
-    state
-        .redis
-        .delete(&format!("store:product:{}", updated.product_id))
-        .await;
+    // Invalidate store cache (write-through)
+    state.invalidate_store_cache(Some(updated.product_id)).await;
 
     Ok(Json(MerchantLinkResponse {
         id: updated.id,
@@ -384,12 +390,8 @@ pub async fn delete_link(
         .execute(&state.db)
         .await?;
 
-    // Invalidate store cache
-    state.redis.delete_pattern("store:list:*").await;
-    state
-        .redis
-        .delete(&format!("store:product:{}", product_id))
-        .await;
+    // Invalidate store cache (write-through)
+    state.invalidate_store_cache(Some(product_id)).await;
 
     Ok(Json(serde_json::json!({ "message": "Merchant link deleted" })))
 }
@@ -401,7 +403,7 @@ pub async fn verify_price(
     Path(merchant_link_id): Path<Uuid>,
     Json(payload): Json<VerifyPriceRequest>,
 ) -> Result<Json<MerchantLinkResponse>, AppError> {
-    let existing = verify_merchant_link_ownership(&state, merchant_link_id, creator_id).await?;
+    let _existing = verify_merchant_link_ownership(&state, merchant_link_id, creator_id).await?;
 
     let is_price_estimated = payload.is_price_estimated.unwrap_or(false);
 
@@ -437,12 +439,8 @@ pub async fn verify_price(
         })
         .collect();
 
-    // Invalidate store cache (is_price_estimated changed)
-    state.redis.delete_pattern("store:list:*").await;
-    state
-        .redis
-        .delete(&format!("store:product:{}", updated.product_id))
-        .await;
+    // Invalidate store cache (write-through)
+    state.invalidate_store_cache(Some(updated.product_id)).await;
 
     Ok(Json(MerchantLinkResponse {
         id: updated.id,
@@ -515,14 +513,20 @@ pub async fn create_variant(
     .bind(&currency)
     .bind(&stock_status)
     .fetch_one(&state.db)
-    .await?;
+    .await
+    .map_err(|e| {
+        if let sqlx::Error::Database(ref db_err) = e {
+            if db_err.code().map_or(false, |c| c == "23503") {
+                return AppError::NotFound(
+                    "Merchant link was deleted before variant could be created".to_string(),
+                );
+            }
+        }
+        AppError::from(e)
+    })?;
 
-    // Invalidate store cache (variant affects product price display)
-    state.redis.delete_pattern("store:list:*").await;
-    state
-        .redis
-        .delete(&format!("store:product:{}", link.product_id))
-        .await;
+    // Invalidate store cache (write-through)
+    state.invalidate_store_cache(Some(link.product_id)).await;
 
     Ok((
         StatusCode::CREATED,
@@ -589,13 +593,7 @@ pub async fn update_variant(
     .ok()
     .flatten();
 
-    state.redis.delete_pattern("store:list:*").await;
-    if let Some(pid) = product_id {
-        state
-            .redis
-            .delete(&format!("store:product:{}", pid))
-            .await;
-    }
+    state.invalidate_store_cache(product_id).await;
 
     Ok(Json(VariantResponse {
         id: updated.id,
@@ -629,13 +627,7 @@ pub async fn delete_variant(
     .ok()
     .flatten();
 
-    state.redis.delete_pattern("store:list:*").await;
-    if let Some(pid) = product_id {
-        state
-            .redis
-            .delete(&format!("store:product:{}", pid))
-            .await;
-    }
+    state.invalidate_store_cache(product_id).await;
 
     Ok(Json(serde_json::json!({ "message": "Variant deleted" })))
 }

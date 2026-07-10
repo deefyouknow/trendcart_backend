@@ -3,15 +3,22 @@ use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation}
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Access token TTL (short-lived — 15 minutes).
+pub const ACCESS_TOKEN_TTL_SECS: i64 = 15 * 60;
+
+/// Refresh token TTL (long-lived — 7 days).
+pub const REFRESH_TOKEN_TTL_SECS: i64 = 7 * 24 * 3600;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,
     pub exp: usize,
 }
 
-pub fn create_token(creator_id: Uuid, secret: &str) -> Result<String, jsonwebtoken::errors::Error> {
+/// Create a short-lived access token (15 min).
+pub fn create_access_token(creator_id: Uuid, secret: &str) -> Result<String, jsonwebtoken::errors::Error> {
     let expiration = Utc::now()
-        .checked_add_signed(Duration::days(7))
+        .checked_add_signed(Duration::seconds(ACCESS_TOKEN_TTL_SECS))
         .expect("valid timestamp")
         .timestamp() as usize;
 
@@ -25,6 +32,16 @@ pub fn create_token(creator_id: Uuid, secret: &str) -> Result<String, jsonwebtok
         &claims,
         &EncodingKey::from_secret(secret.as_bytes()),
     )
+}
+
+/// Generate an opaque refresh token (UUID v4).
+pub fn create_refresh_token() -> String {
+    Uuid::new_v4().to_string()
+}
+
+/// Kept for backward-compat during migration — delegates to create_access_token.
+pub fn create_token(creator_id: Uuid, secret: &str) -> Result<String, jsonwebtoken::errors::Error> {
+    create_access_token(creator_id, secret)
 }
 
 pub fn verify_token(token: &str, secret: &str) -> Result<Claims, jsonwebtoken::errors::Error> {

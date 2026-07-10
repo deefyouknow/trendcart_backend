@@ -59,11 +59,39 @@ impl From<sqlx::Error> for AppError {
             sqlx::Error::RowNotFound => AppError::NotFound("Resource not found".to_string()),
             sqlx::Error::Database(ref db_err) => {
                 if let Some(code) = db_err.code() {
-                    if code == "23505" {
-                        // Unique violation
-                        AppError::Conflict("Resource already exists".to_string())
-                    } else {
-                        AppError::Internal(format!("Database error: {}", code))
+                    match code.as_ref() {
+                        "23505" => {
+                            // Unique violation
+                            AppError::Conflict("Resource already exists".to_string())
+                        }
+                        "23503" => {
+                            // Foreign key violation — referenced data doesn't exist
+                            tracing::warn!(
+                                "Foreign key violation: {}",
+                                db_err.message()
+                            );
+                            AppError::Validation(
+                                "Referenced resource does not exist or has been deleted".to_string(),
+                            )
+                        }
+                        "23502" => {
+                            // Not null violation
+                            AppError::Validation(format!(
+                                "Required field is missing: {}",
+                                db_err.message()
+                            ))
+                        }
+                        "23514" => {
+                            // Check constraint violation
+                            AppError::Validation(format!(
+                                "Data validation failed: {}",
+                                db_err.message()
+                            ))
+                        }
+                        _ => {
+                            tracing::error!("Unhandled database error code {}: {}", code, db_err.message());
+                            AppError::Internal(format!("Database error: {}", code))
+                        }
                     }
                 } else {
                     AppError::Internal(format!("Database error: {}", db_err))
@@ -75,6 +103,18 @@ impl From<sqlx::Error> for AppError {
             }
             _ => AppError::Internal(format!("Database error: {}", err)),
         }
+    }
+}
+
+impl From<serde_json::Error> for AppError {
+    fn from(err: serde_json::Error) -> Self {
+        AppError::Internal(format!("JSON error: {}", err))
+    }
+}
+
+impl From<reqwest::Error> for AppError {
+    fn from(err: reqwest::Error) -> Self {
+        AppError::Internal(format!("HTTP client error: {}", err))
     }
 }
 

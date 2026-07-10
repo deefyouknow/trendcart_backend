@@ -8,12 +8,14 @@ pub mod admin_products;
 pub mod admin_scrape;
 pub mod auth;
 pub mod common;
+pub mod health;
 pub mod redirect;
 pub mod store_products;
 pub mod upload;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/healthz", axum::routing::get(health::healthz))
         .nest("/api/auth", auth::router())
         .nest(
             "/api/admin",

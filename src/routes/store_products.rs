@@ -1,5 +1,4 @@
 use axum::extract::{Path, Query, State};
-use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
@@ -77,7 +76,7 @@ pub async fn list(
 
     // Build cache key from query params
     let cache_key = format!(
-        "list:{}:{}:{:?}:{:?}",
+        "store:list:{}:{}:{:?}:{:?}",
         page, limit, params.category, params.search
     );
 
@@ -113,7 +112,7 @@ pub async fn list(
                 LEFT JOIN product_variants pv ON pv.merchant_link_id = ml.id
                 WHERE p.deleted_at IS NULL
                   AND ($1::text IS NULL OR p.category = $1)
-                  AND ($2::text IS NULL OR p.title ILIKE '%' || $2 || '%' OR p.description ILIKE '%' || $2 || '%')
+                  AND ($2::text IS NULL OR p.search_vector @@ plainto_tsquery('simple', $2))
                 GROUP BY p.id
                 ORDER BY p.created_at DESC
                 LIMIT $3 OFFSET $4
@@ -140,7 +139,7 @@ pub async fn list(
                 FROM products
                 WHERE deleted_at IS NULL
                   AND ($1::text IS NULL OR category = $1)
-                  AND ($2::text IS NULL OR title ILIKE '%' || $2 || '%' OR description ILIKE '%' || $2 || '%')
+                  AND ($2::text IS NULL OR search_vector @@ plainto_tsquery('simple', $2))
                 "#,
             )
             .bind(&category)

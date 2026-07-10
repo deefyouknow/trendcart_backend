@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -84,6 +84,18 @@ impl ProductService {
         category: String,
         images: serde_json::Value,
     ) -> Result<Product, AppError> {
+        // Guard: ตรวจว่า creator ยังมีอยู่ใน DB
+        let creator_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM creators WHERE id = $1)",
+        )
+        .bind(creator_id)
+        .fetch_one(db)
+        .await?;
+
+        if !creator_exists {
+            return Err(AppError::Unauthorized);
+        }
+
         let product: Product = sqlx::query_as(
             r#"
             INSERT INTO products (creator_id, title, description, category, images)

@@ -1,7 +1,6 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use axum::routing::{get, post, put};
+use axum::routing::get;
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -130,8 +129,8 @@ pub async fn create(
     )
     .await?;
 
-    // Invalidate list cache (new product changes listing)
-    state.redis.delete_pattern("store:list:*").await;
+    // Invalidate store cache (write-through)
+    state.invalidate_store_cache(None).await;
 
     Ok((
         StatusCode::CREATED,
@@ -197,11 +196,7 @@ pub async fn update(
     .await?;
 
     // Invalidate store cache (write-through)
-    state.redis.delete_pattern("store:list:*").await;
-    state
-        .redis
-        .delete(&format!("store:product:{}", product_id))
-        .await;
+    state.invalidate_store_cache(Some(product_id)).await;
 
     Ok(Json(ProductResponse {
         id: updated.id,
@@ -221,11 +216,7 @@ pub async fn delete(
     ProductService::delete_product(&state.db, creator_id, product_id).await?;
 
     // Invalidate store cache (write-through)
-    state.redis.delete_pattern("store:list:*").await;
-    state
-        .redis
-        .delete(&format!("store:product:{}", product_id))
-        .await;
+    state.invalidate_store_cache(Some(product_id)).await;
 
     Ok(Json(serde_json::json!({ "message": "Product deleted" })))
 }

@@ -1,6 +1,6 @@
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::routing::{get, post, put};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -367,7 +367,23 @@ pub async fn handle_postback(
     .bind(payload.raw_data.unwrap_or_default())
     .fetch_one(&state.db)
     .await
-    .map_err(|e| AppError::Internal(format!("Failed to create conversion: {}", e)))?;
+    .map_err(|e| {
+        if let sqlx::Error::Database(ref db_err) = e {
+            if db_err.code().map_or(false, |c| c == "23503") {
+                tracing::warn!(
+                    "Postback FK violation for click_id {}: {}",
+                    click_id,
+                    db_err.message()
+                );
+                return AppError::Validation(
+                    "Referenced resource (click, merchant link, or creator) no longer exists"
+                        .to_string(),
+                );
+            }
+        }
+        tracing::error!("Failed to create conversion: {}", e);
+        AppError::Internal(format!("Failed to create conversion: {}", e))
+    })?;
 
     Ok((
         StatusCode::CREATED,
