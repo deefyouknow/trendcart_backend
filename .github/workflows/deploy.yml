@@ -27,7 +27,7 @@ jobs:
             mkdir -p "$BACKEND_DIR"
 
             # ── Sync docker-compose.yml (backend only) ───────────────────
-            sudo tee "$PROJECT_DIR/docker-compose.yml" > /dev/null << 'COMPOSE_EOF'
+            cat > "$PROJECT_DIR/docker-compose.yml" << 'COMPOSE_EOF'
             services:
               trendcart_api:
                 build:
