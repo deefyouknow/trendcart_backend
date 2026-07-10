@@ -26,7 +26,7 @@ jobs:
             mkdir -p "$PROJECT_DIR"
             mkdir -p "$BACKEND_DIR"
 
-            # ── Sync docker-compose.yml ที่ root project ───────────────────
+            # ── Sync docker-compose.yml (backend only) ───────────────────
             cat > "$PROJECT_DIR/docker-compose.yml" << 'COMPOSE_EOF'
             services:
               trendcart_api:
@@ -41,23 +41,6 @@ jobs:
                   RUST_LOG: info
                 ports:
                   - "59123:59123"
-                networks:
-                  - trendcart_net
-
-              trendcart_frontend:
-                build:
-                  context: ./frontend
-                  dockerfile: Dockerfile
-                container_name: trendcart_frontend
-                restart: always
-                depends_on:
-                  - trendcart_api
-                env_file:
-                  - ./frontend/.env
-                environment:
-                  - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://trendcartapi.deefthanawat.online}
-                ports:
-                  - "59124:3000"
                 networks:
                   - trendcart_net
 
